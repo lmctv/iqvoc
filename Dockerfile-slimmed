@@ -1,0 +1,75 @@
+FROM ruby:2.6 as buildenv
+
+ENV RAILS_ENV=production \
+    PORT=3000 \
+    BUNDLE_PATH=/iqvoc/gems \
+    GEM_HOME=/iqvoc/gems \
+    HOME=/iqvoc/home \
+    RAILS_LOG_TO_STDOUT=1 \
+    RAILS_SERVE_STATIC_FILES=1
+
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y -q nodejs npm && \
+    mkdir -p /iqvoc/gems /iqvoc/home && \
+    chown -R daemon /iqvoc
+
+WORKDIR /iqvoc
+USER daemon
+
+COPY --chown=daemon Gemfile Gemfile.lock ./
+COPY --chown=daemon config/database.yml.multi /iqvoc/config/database.yml
+
+RUN bundle install --retry 10 --with remote_dbs --without development test passenger
+
+COPY --chown=daemon . /iqvoc
+
+RUN DB_ADAPTER=nulldb RAILS_ENV=production bundle exec rake assets:precompile
+
+FROM ruby:2.6-slim
+
+ENV RAILS_ENV=production \
+    PORT=3000  \
+    BUNDLE_PATH=/iqvoc/gems \
+    HOME=/iqvoc/home \
+    GEM_HOME=/iqvoc/gems \
+    RAILS_LOG_TO_STDOUT=1 \
+    RAILS_SERVE_STATIC_FILES=1
+
+USER root
+
+RUN echo '# DROP man pages'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo 'path-exclude=/usr/share/man/*'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo ''  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo '# DROP package docs, keeping copyright'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo 'path-exclude=/usr/share/doc/*'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo 'path-include=/usr/share/doc/*/copyright'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    apt-get update -qq && \
+    apt-get install --no-install-recommends -y -q \
+            shared-mime-info \
+            libmariadb3 \
+            libpq5 \
+            libgssapi-krb5-2 \
+            libldap-2.4-2 \
+            libssl1.1 \
+            libnettle8 \
+            libidn2-0 \
+            nodejs \
+            libcurl4 \
+            libpsl5 \
+            librtmp1 \
+            libssh2-1 \
+            npm  && \
+    mkdir -p /iqvoc /iqvoc/gems /iqvoc/home /usr/local/bundle && \
+    chown -R daemon /iqvoc /usr/local/bundle
+
+WORKDIR /iqvoc
+
+USER daemon
+
+COPY --from=buildenv --chown=daemon /iqvoc /iqvoc
+COPY --from=buildenv --chown=daemon /opt /opt
+COPY --from=buildenv --chown=daemon /usr/local/bundle /usr/local/bundle
+
+EXPOSE ${PORT}
+
+CMD bundle exec rake db:migrate && bundle exec rake db:seed && bin/delayed_job start && exec bundle exec rails server --port=$PORT --environment=$RAILS_ENV
