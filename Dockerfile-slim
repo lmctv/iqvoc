@@ -1,0 +1,47 @@
+FROM localhost/iqvoc:latest as buildenv
+
+FROM ruby:2.6-slim
+
+ENV RAILS_ENV=production \
+    PORT=3000 \
+    BUNDLE_PATH=/iqvoc/gems \
+    HOME=/iqvoc/home \
+    GEM_HOME=/iqvoc/gems
+
+USER root
+
+RUN echo '# DROP man pages'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo 'path-exclude=/usr/share/man/*'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo ''  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo '# DROP package docs, keeping copyright'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo 'path-exclude=/usr/share/doc/*'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    echo 'path-include=/usr/share/doc/*/copyright'  | tee -a /etc/dpkg/dpkg.cfg.d/excludes && \
+    apt-get update -qq && \
+    apt-get install --no-install-recommends -y -q \
+            shared-mime-info \
+            libmariadb3 \
+            libpq5 \
+            libgssapi-krb5-2 \
+            libldap-2.4-2 \
+            libssl1.1 \
+            libnettle8 \
+            libidn2-0 \
+            nodejs \
+            libcurl4 \
+            libpsl5 \
+            librtmp1 \
+            libssh2-1 \
+            npm  && \
+    mkdir -p /iqvoc /iqvoc/gems /iqvoc/home && \
+    chown -R daemon /iqvoc
+
+WORKDIR /iqvoc
+USER daemon
+
+COPY --from=buildenv --chown=daemon /iqvoc /iqvoc
+COPY --from=buildenv --chown=daemon /opt /opt
+COPY --from=buildenv --chown=daemon /usr/local/bundle /usr/local/bundle
+
+EXPOSE ${PORT}
+
+CMD bundle exec rake db:migrate && bundle exec rake db:seed && bin/delayed_job start && exec bundle exec passenger start --port $PORT --environment $RAILS_ENV
